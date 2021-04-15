@@ -1,3 +1,6 @@
+import threading
+import time
+
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gst', '1.0')
@@ -6,6 +9,7 @@ from gi.repository import Gtk, Gst
 Gst.init(None)
 Gst.init_check(None)
 
+from sender import Sender
 
 class WindowMain:
 
@@ -24,11 +28,41 @@ class WindowMain:
         self.window_sender.show()
 
 
+
+
     
     def main(self):
         Gtk.main()
+        
+
+
+
+def start_sender():
+    sender = Sender()
+
+def start_gui():
+    app = WindowMain()
+    app.main()
 
 
 if __name__ == "__main__":
-    app = WindowMain()
-    app.main()
+    
+    gui_thread = threading.Thread(target=start_gui)
+    sender_thread = threading.Thread(target=start_sender)
+
+    gui_thread.daemon = True
+    sender_thread.daemon = True
+
+    try:
+        gui_thread.start()
+        sender_thread.start()
+        while True: time.sleep(100)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    
+
+
+
+    
+
+
