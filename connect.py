@@ -3,6 +3,7 @@ import websockets
 import asyncio
 import threading
 import time
+import json
 
 class SignallingServerConnection:
     def __init__(self, own_id, peer_id, server, room_id, msg_handler):
@@ -13,6 +14,13 @@ class SignallingServerConnection:
         self.connection = None
 
         self.msg_handler = msg_handler
+
+    
+    def send_msg(self, msg):
+        formatted_msg = 'ROOM_PEER_MSG {} {}'.format(self.peer_id, json.dumps(msg))
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.connection.send(formatted_msg))
+        loop.close()
         
         
 
