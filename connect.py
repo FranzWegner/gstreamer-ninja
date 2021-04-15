@@ -5,12 +5,14 @@ import threading
 import time
 
 class SignallingServerConnection:
-    def __init__(self, own_id, peer_id, server, room_id):
+    def __init__(self, own_id, peer_id, server, room_id, msg_handler):
         self.own_id = own_id
         self.peer_id = peer_id
         self.server = server
         self.room_id = room_id
         self.connection = None
+
+        self.msg_handler = msg_handler
         
         
 
@@ -24,5 +26,6 @@ class SignallingServerConnection:
     
     async def loop(self):
         async for msg in self.connection:
-            print(self.own_id, msg)
+            #print(self.own_id, msg)
+            self.msg_handler(msg)
             
