@@ -3,6 +3,7 @@ import threading
 import json
 import sys
 import logging
+import time
 
 from connect import SignallingServerConnection
 
@@ -61,27 +62,55 @@ class Sender:
     def create_pipeline_from_config(self, config):
         print("Trying to build Gstreamer Pipeline from this config:", config)
         Gst.init(sys.argv[1:])
+        pipeline = Gst.Pipeline.new("sender-pipeline")
 
-        source = Gst.ElementFactory.make("videotestsrc", "source")
-        tee = Gst.ElementFactory.make("tee", "tee")
-        queue = Gst.ElementFactory.make("queue")
+        source = Gst.ElementFactory.make("videotestsrc")
+        tee = Gst.ElementFactory.make("tee")
+        preview_queue = Gst.ElementFactory.make("queue")
+        network_queue = Gst.ElementFactory.make("queue")
+        preview_sink = Gst.ElementFactory.make("gtksink")
 
+        videoconvert = Gst.ElementFactory.make("videoconvert")
+        x264enc = Gst.ElementFactory.make("x264enc")
+        x264enc.set_property("tune", "zerolatency")
+        caps = Gst.Caps.from_string("video/x-h264, profile=high")
+        mpegtsmux = Gst.ElementFactory.make("mpegtsmux")
+        network_sink = Gst.ElementFactory.make("srtsink")
+        network_sink.set_property("uri", "srt://:8888/")
+
+        self.em.emit("start_sender_preview", preview_sink)
+
+        pipeline.add(source)
+        pipeline.add(tee)
+        pipeline.add(preview_queue)
+        pipeline.add(network_queue)
+        pipeline.add(preview_sink)
+
+
+        pipeline.add(videoconvert)
+        pipeline.add(x264enc)
+        #pipeline.add(caps)
+        pipeline.add(mpegtsmux)
+        pipeline.add(network_sink)
+
+        source.link(tee)
+        tee.link(preview_queue)
+        tee.link(network_queue)
+        preview_queue.link(preview_sink)
+        network_queue.link(videoconvert)
+        videoconvert.link(x264enc)
+        x264enc.link_filtered(mpegtsmux, caps)
+        #caps.link(mpegtsmux)
+        mpegtsmux.link(network_sink)
+
+        
 
         # emit widget only to main
 
-        self.em.emit("start_sender_preview", source)
-
-        #new pipeline for network
-
-        pipeline = Gst.Pipeline.new("sending-pipeline")
-        sink = Gst.ElementFactory.make("autovideosink", "sink")
-
-        pipeline.add(source)
-        pipeline.add(sink)
-
-        source.link(sink)
+        
 
         pipeline.set_state(Gst.State.PLAYING)
+
         
 
 

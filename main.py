@@ -94,19 +94,10 @@ class WindowMain:
 
 
 
-    def start_sender_preview(self, source):
+    def start_sender_preview(self, gtksink):
 
-        time.sleep(1)
+        #time.sleep(1)
 
-        gtksink = Gst.ElementFactory.make("gtksink", "sink")
-
-        Gst.init(sys.argv[1:])
-        pipeline = Gst.Pipeline.new("test-pipeline")
-
-        pipeline.add(source)
-        pipeline.add(gtksink)
-
-        source.link(gtksink)
 
         container = self.builder.get_object("sender_local_preview_container")
 
@@ -114,7 +105,6 @@ class WindowMain:
 
         gtksink.props.widget.show()
 
-        pipeline.set_state(Gst.State.PLAYING)
         
 
 
