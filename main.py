@@ -8,6 +8,10 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gst', '1.0')
 
 from gi.repository import Gtk, Gst
+
+#Gst.debug_set_active(True)
+#Gst.debug_set_default_threshold(3)
+
 Gst.init(None)
 Gst.init_check(None)
 
@@ -26,6 +30,7 @@ class WindowMain:
         
         self.em.on("change_label", self.change_label)
         self.em.on("start_sender_preview", self.start_sender_preview)
+        self.em.on("start_receiver_preview", self.start_receiver_preview)
 
         self.builder = Gtk.Builder()
         self.builder.add_from_file("gui/gstreamer-ninja-gui.glade")
@@ -50,10 +55,17 @@ class WindowMain:
     
     def on_receiver_request_video_button_clicked(self, user_data):
         config = {
-            "receiver_source_list": self.builder.get_object("receiver_source_list").get_active_text(),
-            "receiver_protocol_list": self.builder.get_object("receiver_protocol_list").get_active_text(),
-            "receiver_encoder_list": self.builder.get_object("receiver_encoder_list").get_active_text()
+            "source": self.builder.get_object("receiver_source_list").get_active_text(),
+            "protocol": self.builder.get_object("receiver_protocol_list").get_active_text(),
+            "encoder": self.builder.get_object("receiver_encoder_list").get_active_text()
         }
+
+        
+
+        #start receiver
+        self.em.emit("update_receiver_config", config)
+
+        
 
         self.em.emit("update_sender_config", config)
 
@@ -100,6 +112,17 @@ class WindowMain:
 
 
         container = self.builder.get_object("sender_local_preview_container")
+
+        container.pack_start(gtksink.props.widget, True, True, 0)
+
+        gtksink.props.widget.show()
+
+        #receive like this
+        #gst-launch-1.0 srtsrc uri=srt://:25570 ! decodebin ! autovideosink
+    
+    def start_receiver_preview(self, gtksink):
+
+        container = self.builder.get_object("receiver_local_preview_container")
 
         container.pack_start(gtksink.props.widget, True, True, 0)
 

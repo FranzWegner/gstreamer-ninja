@@ -12,7 +12,11 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('Gst', '1.0')
 
 
+
 from gi.repository import Gtk, Gst
+
+Gst.debug_set_active(True)
+Gst.debug_set_default_threshold(3)
 
 Gst.init(None)
 Gst.init_check(None)
@@ -71,12 +75,34 @@ class Sender:
         preview_sink = Gst.ElementFactory.make("gtksink")
 
         videoconvert = Gst.ElementFactory.make("videoconvert")
-        x264enc = Gst.ElementFactory.make("x264enc")
-        x264enc.set_property("tune", "zerolatency")
-        caps = Gst.Caps.from_string("video/x-h264, profile=high")
-        mpegtsmux = Gst.ElementFactory.make("mpegtsmux")
+        
+        encoder = None
+        caps = None
+
+
+        if config["encoder"] == "H264":
+            encoder = Gst.ElementFactory.make("x264enc")
+            encoder.set_property("tune", "zerolatency")
+            caps = Gst.Caps.from_string("video/x-h264, profile=high")
+        elif config["encoder"] == "H265":
+            encoder = Gst.ElementFactory.make("x265enc")
+            encoder.props.tune = "zerolatency"
+            #encoder.props.bitrate = 1024
+            caps = Gst.Caps.from_string("video/x-h265, profile=main")
+        elif config["encoder"] == "VP8":
+            encoder = Gst.ElementFactory.make("vp8enc")
+            caps = Gst.Caps.from_string("video/x-vp8, profile=0")
+        elif config["encoder"] == "VP9":
+            encoder = Gst.ElementFactory.make("vp9enc")
+            caps = Gst.Caps.from_string("video/x-vp9, profile=0")
+
+
+        
+        muxer = Gst.ElementFactory.make("mpegtsmux")
         network_sink = Gst.ElementFactory.make("srtsink")
-        network_sink.set_property("uri", "srt://:8888/")
+        network_sink.set_property("uri", "srt://192.168.0.119:25570/")
+        network_sink.set_property("wait-for-connection", "false")
+        network_sink.set_property("mode", 1)
 
         self.em.emit("start_sender_preview", preview_sink)
 
@@ -88,9 +114,8 @@ class Sender:
 
 
         pipeline.add(videoconvert)
-        pipeline.add(x264enc)
-        #pipeline.add(caps)
-        pipeline.add(mpegtsmux)
+        pipeline.add(encoder)
+        pipeline.add(muxer)
         pipeline.add(network_sink)
 
         source.link(tee)
@@ -98,10 +123,9 @@ class Sender:
         tee.link(network_queue)
         preview_queue.link(preview_sink)
         network_queue.link(videoconvert)
-        videoconvert.link(x264enc)
-        x264enc.link_filtered(mpegtsmux, caps)
-        #caps.link(mpegtsmux)
-        mpegtsmux.link(network_sink)
+        videoconvert.link(encoder)
+        encoder.link_filtered(muxer, caps)
+        muxer.link(network_sink)
 
         
 
@@ -110,6 +134,17 @@ class Sender:
         
 
         pipeline.set_state(Gst.State.PLAYING)
+
+        # wait until EOS or error
+        #bus = pipeline.get_bus()
+        #msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE,Gst.MessageType.ERROR | Gst.MessageType.EOS)
+
+        # free resources
+        #pipeline.set_state(Gst.State.NULL)
+
+
+
+        
 
         
 
