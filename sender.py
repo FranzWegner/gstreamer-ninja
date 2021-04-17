@@ -97,12 +97,18 @@ class Sender:
             caps = Gst.Caps.from_string("video/x-vp9, profile=0")
 
 
+        muxer = None
+        network_sink = None
+
+        if config["protocol"] == "SRT":
+            muxer = Gst.ElementFactory.make("mpegtsmux")
+            network_sink = Gst.ElementFactory.make("srtsink")
+            network_sink.set_property("uri", "srt://192.168.0.119:25570/")
+            network_sink.set_property("wait-for-connection", "false")
+            network_sink.set_property("mode", 1)
+
+
         
-        muxer = Gst.ElementFactory.make("mpegtsmux")
-        network_sink = Gst.ElementFactory.make("srtsink")
-        network_sink.set_property("uri", "srt://192.168.0.119:25570/")
-        network_sink.set_property("wait-for-connection", "false")
-        network_sink.set_property("mode", 1)
 
         self.em.emit("start_sender_preview", preview_sink)
 
