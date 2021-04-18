@@ -13,6 +13,14 @@ gst-launch-1.0 -v videotestsrc ! timeoverlay ! x264enc tune=zerolatency ! tcpcli
 Receiver (if host)
 gst-launch-1.0 -v tcpserversrc host=127.0.0.1 port=25570 ! h264parse ! decodebin ! videoconvert ! autovideosink
 
+
+VP8 over TCP with matroska
+Send (Remote)
+gst-launch-1.0 -v videotestsrc ! timeoverlay ! vp8enc ! matroskamux ! tcpclientsink host=127.0.0.1 port=25571
+
+Receiver (Server)
+gst-launch-1.0 -v tcpserversrc host=127.0.0.1 port=25571 ! matroskademux ! decodebin ! videoconvert ! autovideosink
+
 H264 over RTMP (Server on Nimble)
 Sender
 gst-launch-1.0 -v videotestsrc ! timeoverlay ! x264enc tune=zerolatency ! flvmux ! rtmpsink location="rtmp://127.0.0.1:25570/live/obs live=1"

@@ -62,7 +62,12 @@ class Sender:
             data = json.loads(msg.split(maxsplit=2)[2])
             if "update_sender_config" in data:
                 self.create_pipeline_from_config(data["update_sender_config"])
+                #pass
     
+    
+    def get_correct_payloader_element(self, encoder):
+        return Gst.ElementFactory.make("rtp" + encoder.lower() + "pay")
+
     def create_pipeline_from_config(self, config):
         print("Trying to build Gstreamer Pipeline from this config:", config)
         Gst.init(sys.argv[1:])
@@ -79,10 +84,11 @@ class Sender:
         encoder = None
         caps = None
 
-
+        # caps nicht nötig bei SRT und UDP bisher
         if config["encoder"] == "H264":
             encoder = Gst.ElementFactory.make("x264enc")
             encoder.set_property("tune", "zerolatency")
+            encoder.set_property("key-int-max", 30)
             caps = Gst.Caps.from_string("video/x-h264, profile=high")
         elif config["encoder"] == "H265":
             encoder = Gst.ElementFactory.make("x265enc")
@@ -99,6 +105,7 @@ class Sender:
 
         muxer = None
         network_sink = None
+        parser = None
 
         if config["protocol"] == "SRT":
             muxer = Gst.ElementFactory.make("mpegtsmux")
@@ -106,6 +113,38 @@ class Sender:
             network_sink.set_property("uri", "srt://192.168.0.119:25570/")
             network_sink.set_property("wait-for-connection", "false")
             network_sink.set_property("mode", 1)
+        elif config["protocol"] == "UDP":
+            # gst-launch-1.0 -v videotestsrc ! x264enc tune=zerolatency ! rtph264pay ! udpsink host=127.0.0.1 port=25570
+            
+            
+            muxer = self.get_correct_payloader_element(config["encoder"])
+
+            network_sink = Gst.ElementFactory.make("udpsink")
+            network_sink.props.host = "127.0.0.1"
+            network_sink.props.port = 25570
+        elif config["protocol"] == "TCP":
+            #gst-launch-1.0 -v videotestsrc ! timeoverlay ! vp8enc ! matroskamux ! tcpclientsink host=127.0.0.1 port=25571
+            if (config["encoder"] == "H265"):
+                parser = Gst.ElementFactory.make("h265parse")
+            muxer = Gst.ElementFactory.make("matroskamux")
+            network_sink = Gst.ElementFactory.make("tcpclientsink")
+            network_sink.props.host = "127.0.0.1"
+            network_sink.props.port = 25571
+        elif config["protocol"] == "RTMP":
+            #gst-launch-1.0 -v videotestsrc ! timeoverlay ! x264enc tune=zerolatency ! flvmux ! rtmpsink location="rtmp://127.0.0.1:25570/live/obs live=1"
+            muxer = Gst.ElementFactory.make("flvmux")
+            network_sink = Gst.ElementFactory.make("rtmpsink")
+            network_sink.props.location = "rtmp://127.0.0.1:25570/live/obs live=1"
+        elif config["protocol"] == "HLS":
+            muxer = Gst.ElementFactory.make("mpegtsmux")
+            network_sink = Gst.ElementFactory.make("hlssink")
+            network_sink.set_property("playlist-location", "tmp/hls/playlist.m3u8")
+
+
+
+
+
+
 
 
         
@@ -121,6 +160,9 @@ class Sender:
 
         pipeline.add(videoconvert)
         pipeline.add(encoder)
+        if (parser):
+            pipeline.add(parser)
+
         pipeline.add(muxer)
         pipeline.add(network_sink)
 
@@ -130,7 +172,14 @@ class Sender:
         preview_queue.link(preview_sink)
         network_queue.link(videoconvert)
         videoconvert.link(encoder)
-        encoder.link_filtered(muxer, caps)
+        #encoder.link_filtered(muxer, caps)
+
+        if (parser):
+            encoder.link(parser)
+            parser.link(muxer)
+        else:
+            encoder.link(muxer)
+  
         muxer.link(network_sink)
 
         
