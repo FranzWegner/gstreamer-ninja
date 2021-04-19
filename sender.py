@@ -69,11 +69,19 @@ class Sender:
         return Gst.ElementFactory.make("rtp" + encoder.lower() + "pay")
 
     def create_pipeline_from_config(self, config):
+
+        if (self.pipeline):
+            self.pipeline.set_state(Gst.State.NULL)
+
+        self.pipeline = None        
+
         print("Trying to build Gstreamer Pipeline from this config:", config)
         Gst.init(sys.argv[1:])
-        pipeline = Gst.Pipeline.new("sender-pipeline")
+        self.pipeline = Gst.Pipeline.new("sender-pipeline")
 
         source = Gst.ElementFactory.make("videotestsrc")
+        source.props.pattern = "ball"
+        #source.set_property("is-live", True)
         tee = Gst.ElementFactory.make("tee")
         preview_queue = Gst.ElementFactory.make("queue")
         network_queue = Gst.ElementFactory.make("queue")
@@ -88,11 +96,12 @@ class Sender:
         if config["encoder"] == "H264":
             encoder = Gst.ElementFactory.make("x264enc")
             encoder.set_property("tune", "zerolatency")
-            encoder.set_property("key-int-max", 30)
+            encoder.set_property("key-int-max", 15)
             caps = Gst.Caps.from_string("video/x-h264, profile=high")
         elif config["encoder"] == "H265":
             encoder = Gst.ElementFactory.make("x265enc")
             encoder.props.tune = "zerolatency"
+            encoder.set_property("key-int-max", 15)
             #encoder.props.bitrate = 1024
             caps = Gst.Caps.from_string("video/x-h265, profile=main")
         elif config["encoder"] == "VP8":
@@ -136,9 +145,17 @@ class Sender:
             network_sink = Gst.ElementFactory.make("rtmpsink")
             network_sink.props.location = "rtmp://127.0.0.1:25570/live/obs live=1"
         elif config["protocol"] == "HLS":
+            #gst-launch-1.0 videotestsrc is-live=true ! x264enc ! mpegtsmux ! hlssink max-files=5 target-duration=2 playlist-location="B:/python/gstreamer-ninja/tmp/hls/playlist.m3u8" location=B:/python/gstreamer-ninja/tmp/hls/segment%05d.ts
             muxer = Gst.ElementFactory.make("mpegtsmux")
             network_sink = Gst.ElementFactory.make("hlssink")
-            network_sink.set_property("playlist-location", "tmp/hls/playlist.m3u8")
+            network_sink.set_property("playlist-location", "B:/python/gstreamer-ninja/http-server/hls/playlist.m3u8")
+            network_sink.set_property("location", "B:/python/gstreamer-ninja/http-server/hls/segment%05d.ts")
+            network_sink.set_property("target-duration", 2)
+        elif config["protocol"] == "DASH":
+            #dummy
+
+            muxer = Gst.ElementFactory.make("mpegtsmux")
+            network_sink = Gst.ElementFactory.make("fakesink")
 
 
 
@@ -151,20 +168,20 @@ class Sender:
 
         self.em.emit("start_sender_preview", preview_sink)
 
-        pipeline.add(source)
-        pipeline.add(tee)
-        pipeline.add(preview_queue)
-        pipeline.add(network_queue)
-        pipeline.add(preview_sink)
+        self.pipeline.add(source)
+        self.pipeline.add(tee)
+        self.pipeline.add(preview_queue)
+        self.pipeline.add(network_queue)
+        self.pipeline.add(preview_sink)
 
 
-        pipeline.add(videoconvert)
-        pipeline.add(encoder)
+        self.pipeline.add(videoconvert)
+        self.pipeline.add(encoder)
         if (parser):
-            pipeline.add(parser)
+            self.pipeline.add(parser)
 
-        pipeline.add(muxer)
-        pipeline.add(network_sink)
+        self.pipeline.add(muxer)
+        self.pipeline.add(network_sink)
 
         source.link(tee)
         tee.link(preview_queue)
@@ -186,9 +203,11 @@ class Sender:
 
         # emit widget only to main
 
-        
+        if config["protocol"] == "DASH":
+            self.pipeline = Gst.parse_launch("videotestsrc is-live=true pattern=ball ! videoconvert ! x264enc ! dashsink.video_0 dashsink name=dashsink max-files=5 target-duration=2 mpd-root-path=B:/python/gstreamer-ninja/http-server/dash/ dynamic=true minimum-update-period=1000")
+            #self.em.emit("start_sender_preview", self.pipeline.get_by_name("gtksink"))
 
-        pipeline.set_state(Gst.State.PLAYING)
+        self.pipeline.set_state(Gst.State.PLAYING)
 
         # wait until EOS or error
         #bus = pipeline.get_bus()

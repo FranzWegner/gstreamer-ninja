@@ -1,0 +1,17 @@
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-ALLOW-CACHE:NO
+#EXT-X-MEDIA-SEQUENCE:6
+#EXT-X-TARGETDURATION:2
+
+#EXTINF:2,
+B:/python/gstreamer-ninja/tmp/hls\segment00005.ts
+#EXTINF:2,
+B:/python/gstreamer-ninja/tmp/hls\segment00006.ts
+#EXTINF:2,
+B:/python/gstreamer-ninja/tmp/hls\segment00007.ts
+#EXTINF:2,
+B:/python/gstreamer-ninja/tmp/hls\segment00008.ts
+#EXTINF:2,
+B:/python/gstreamer-ninja/tmp/hls\segment00009.ts
+#EXT-X-ENDLIST

@@ -2,6 +2,7 @@ import asyncio
 import threading
 import sys
 import time
+import requests
 
 
 from connect import SignallingServerConnection
@@ -19,17 +20,19 @@ Gst.debug_set_default_threshold(3)
 Gst.init(None)
 Gst.init_check(None)
 
-
+#loop = GObject.MainLoop()
 
 ROOM_ID = "123"
 
 class Receiver:
 
     def __init__(self, e_emitter):
-
+        
         self.em = e_emitter
         self.em.on("update_sender_config", self.update_sender_config)
         self.em.on("update_receiver_config", self.update_receiver_config)
+        self.pipeline = None
+        self.config = None
 
 
         print("Creating Receiver")
@@ -46,9 +49,33 @@ class Receiver:
     def update_sender_config(self, config):
         self.connection.send_msg({"update_sender_config": config})
     
+    def bus_msg_handler(self, bus, message, *user_data):
+        if message.type == Gst.MessageType.ERROR:
+            err, debug = message.parse_error()
+            print("hahaha", err, debug)
+            self.retry_pipeline()
+    
+    def retry_pipeline(self):
+        self.pipeline.set_state(Gst.State.NULL)
+        time.sleep(2)
+        self.pipeline.set_state(Gst.State.PLAYING)
+
+    async def wait_for_playlist(self):
+        #bullshit, not async
+        r = requests.get('http://127.0.0.1:5000/hls/playlist.m3u8')
+        while r.status_code == 404:
+            print(r.status_code)
+            await asyncio.sleep(1)
+            r = requests.get('http://127.0.0.1:5000/hls/playlist.m3u8')
+        return True
+
+    
     def update_receiver_config(self, config):
         Gst.init(sys.argv[1:])
-        #loop = GObject.MainLoop()
+
+        self.config = config
+        #GObject.MainContext.push_thread_default(GObject.MainContext())
+        
 
         # pipeline = Gst.Pipeline.new("receiver-pipeline")
 
@@ -68,17 +95,24 @@ class Receiver:
         # source.link(decodebin)
         # decodebin.link(preview_sink)
 
-        pipeline = None
+        if (self.pipeline):
+            self.pipeline.set_state(Gst.State.NULL)
+
+        self.pipeline = None
 
         if config["protocol"] == "SRT":
-            pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! decodebin ! videoconvert ! gtksink name=gtksink")
+            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! decodebin ! videoconvert ! gtksink name=gtksink")
         elif config["protocol"] == "UDP":
-            pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! videoconvert ! gtksink name=gtksink'.format(config["encoder"], config["encoder"].lower()))
+            self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! videoconvert ! gtksink name=gtksink'.format(config["encoder"], config["encoder"].lower()))
         elif config["protocol"] == "TCP":
-            pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! matroskademux ! decodebin ! videoconvert ! gtksink name=gtksink')
+            self.pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! queue ! matroskademux ! queue !  decodebin ! videoconvert ! gtksink name=gtksink')
         elif config["protocol"] == "RTMP":
             #gst-launch-1.0 -v rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! videoconvert ! autovideosink
-            pipeline = Gst.parse_launch('rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! videoconvert ! gtksink name=gtksink')
+            self.pipeline = Gst.parse_launch('rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! videoconvert ! gtksink name=gtksink')
+        elif config["protocol"] == "HLS":
+            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/playlist.m3u8 ! hlsdemux ! decodebin ! videoconvert ! gtksink name=gtksink")
+        elif config["protocol"] == "DASH":
+            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd retries=-1 ! dashdemux ! decodebin ! videoconvert ! gtksink name=gtksink")
 
 
         #WORKS pad_added missing from previous https://stackoverflow.com/questions/49639362/gstreamer-python-decodebin-jpegenc-elements-not-linking
@@ -89,19 +123,38 @@ class Receiver:
 
         #pipeline.set_state(Gst.State.PLAYING)
 
-        gtksink = pipeline.get_by_name("gtksink")
+        gtksink = self.pipeline.get_by_name("gtksink")
         self.em.emit("start_receiver_preview", gtksink)
 
-        pipeline.set_state(Gst.State.PLAYING)
+        #pipeline.set_state(Gst.State.READY)
+
+        if config["protocol"] == "HLS":
+            pass
+            #block until return 200 instead of 404
+            #loop = asyncio.new_event_loop()
+            #loop.run_until_complete(self.wait_for_playlist())
+           
+
+
         
-        bus = pipeline.get_bus()
+
+        self.pipeline.set_state(Gst.State.PLAYING)
         
-        #bus.add_watch(GLib.PRIORITY_DEFAULT, self.bus_msg_handler, None)
+        bus = self.pipeline.get_bus()
+        bus.set_sync_handler(self.bus_msg_handler)
+        
+        
+
+        #bus.add_signal_watch()
+
+        #bus.add_watch(GLib.PRIORITY_HIGH, self.bus_msg_handler, None)
         #bus.create_watch()
         #bus.set_sync_handler(self.bus_msg_handler)
-
-        #bus.connect("message", self.bus_msg_handler)
         #bus.add_signal_watch()
+        #bus.connect("message", self.bus_msg_handler, loop)
+        
+        #bus.remove_signal_watch()
+        
         #bus.enable_sync_message_emission()
         
         #loop.run()
@@ -119,12 +172,7 @@ class Receiver:
         # free resources
         #pipeline.set_state(Gst.State.NULL)
 
-    def bus_msg_handler(receiver, bus, message):
-            try:
-                print(message.parse_tag())
-            except TypeError:
-                pass
-        #pass
+
 
     def msg_handler(self, msg):
         print("receiver", msg)

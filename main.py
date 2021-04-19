@@ -70,41 +70,8 @@ class WindowMain:
         self.em.emit("update_sender_config", config)
 
     def on_click_me_clicked(self, user_data):
-        Gst.init(sys.argv[1:])
-        pipeline = Gst.Pipeline.new("tee-pipeline")
-
-        video_source = Gst.ElementFactory.make("videotestsrc", "source")
-        tee = Gst.ElementFactory.make("tee", "tee")
-        queue1 = Gst.ElementFactory.make("queue", "queue1")
-        queue2 = Gst.ElementFactory.make("queue", "queue2")
-        sink1 = Gst.ElementFactory.make("autovideosink", "sink1")
-        sink2 = Gst.ElementFactory.make("autovideosink", "sink2")
-
-        pipeline.add(video_source)
-        pipeline.add(tee)
-        pipeline.add(queue1)
-        pipeline.add(queue2)
-        pipeline.add(sink1)
-        pipeline.add(sink2)
-
-        video_source.link(tee)
-        tee.link(queue1)
-        tee.link(queue2)
-        queue1.link(sink1)
-        queue2.link(sink2)
-
-        pipeline.set_state(Gst.State.PLAYING)
-
-
+        pass
         
-
-
-
-
-
-
-
-
 
     def start_sender_preview(self, gtksink):
 
@@ -112,6 +79,11 @@ class WindowMain:
 
 
         container = self.builder.get_object("sender_local_preview_container")
+
+        children = container.get_children()
+
+        if (len(children) > 0):
+            children[0].destroy()
 
         container.pack_start(gtksink.props.widget, True, True, 0)
 
@@ -123,6 +95,11 @@ class WindowMain:
     def start_receiver_preview(self, gtksink):
 
         container = self.builder.get_object("receiver_local_preview_container")
+
+        children = container.get_children()
+
+        if (len(children) > 0):
+            children[0].destroy()
 
         container.pack_start(gtksink.props.widget, True, True, 0)
 

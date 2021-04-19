@@ -32,6 +32,18 @@ HLS
 Send over FFMPEG, POST to remote http server (accepts post requests and saves files)
 ffmpeg -re -i lol.mp4 -f hls -method POST http://127.0.0.1:5000/hls/out.m3u8
 
+Send over Gstreamer
+gst-launch-1.0 videotestsrc is-live=true ! x264enc ! mpegtsmux ! hlssink max-files=5 target-duration=2 playlist-location="B:/python/gstreamer-ninja/tmp/hls/playlist.m3u8" location=B:/python/gstreamer-ninja/tmp/hls/segment%05d.ts
+
 Receive (alternativ mit local file source)
-gst-launch-1.0 souphttpsrc location=http://127.0.0.1:5000/hls/out.m3u8 ! hlsdemux ! decodebin ! autovideosink
+gst-launch-1.0 souphttpsrc location=http://127.0.0.1:5000/hls/out.m3u8 ! hlsdemux ! decodebin ! videoconvert ! autovideosink
+
+#doesnt work because playlist file gets restricted
 gst-launch-1.0 filesrc location=out.m3u8 ! hlsdemux ! decodebin ! autovideosink
+
+DASH
+Send
+gst-launch-1.0 videotestsrc is-live=true ! x264enc ! dashsink.video_0 dashsink name=dashsink max-files=5 target-duration=2 mpd-root-path=B:/python/gstreamer-ninja/http-server/dash/
+
+Receive
+gst-launch-1.0 souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd ! dashdemux ! decodebin ! videoconvert ! autovideosink
