@@ -11,7 +11,10 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gst', '1.0')
 
-
+gi.require_version('GstWebRTC', '1.0')
+from gi.repository import GstWebRTC
+gi.require_version('GstSdp', '1.0')
+from gi.repository import GstSdp
 
 from gi.repository import Gtk, Gst
 
@@ -35,6 +38,7 @@ class Sender:
         self.pipeline = None
         self.bus = None
         self.message = None
+        self.webrtcbin = None
 
         #self.create_pipeline_from_config(test_config)
         
@@ -42,7 +46,7 @@ class Sender:
         #self.gui_handler = gui_handler
 
         print("Creating Sender")
-        connection = SignallingServerConnection("sender", "receiver", "wss://localhost:8443", ROOM_ID, self.msg_handler)
+        self.connection = SignallingServerConnection("sender", "receiver", "wss://localhost:8443", ROOM_ID, self.msg_handler)
         
         # helpful: https://gist.github.com/lars-tiede/01e5f5a551f29a5f300e
 
@@ -50,12 +54,12 @@ class Sender:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        loop.run_until_complete(connection.connect())
-        loop.run_until_complete(connection.loop())
+        loop.run_until_complete(self.connection.connect())
+        loop.run_until_complete(self.connection.loop())
 
     def msg_handler(self, msg):
-        print("sender", msg)
-
+        #print("sender", msg)
+        
         if msg.startswith("ROOM_OK"):
             self.em.emit("change_label", label_id="sender_room_id_label", new_text=ROOM_ID)
         elif msg.startswith('ROOM_PEER_MSG'):
@@ -63,10 +67,57 @@ class Sender:
             if "update_sender_config" in data:
                 self.create_pipeline_from_config(data["update_sender_config"])
                 #pass
+            elif "sdp" in data:
+                sdp = data["sdp"]
+                res, sdpmsg = GstSdp.SDPMessage.new()
+                GstSdp.sdp_message_parse_buffer(bytes(sdp.encode()), sdpmsg)
+                answer = GstWebRTC.WebRTCSessionDescription.new(GstWebRTC.WebRTCSDPType.ANSWER, sdpmsg)
+                promise = Gst.Promise.new_with_change_func(self.on_remote_dec_set)
+                self.webrtcbin.emit("set-remote-description", answer, promise)
+            elif "ice" in data:
+                mline_index = int(data["ice"]["sdpMLineIndex"])
+                candidate = data["ice"]["candidate"]
+                self.webrtcbin.emit("add-ice-candidate", mline_index, candidate)
+                print("ICE Candidate:", candidate)            
     
-    
+    def on_remote_dec_set(self, promise):
+        promise.wait()
+        print("Got Answer and Set Remote Description")
+
+
+
     def get_correct_payloader_element(self, encoder):
         return Gst.ElementFactory.make("rtp" + encoder.lower() + "pay")
+
+    def send_sdp_offer(self, offer):
+        text = offer.sdp.as_text()
+        sdp = {'type': 'offer', 'sdp': text}
+        self.connection.send_msg(sdp)
+
+    def on_offer_created(self, promise, webrtcbin, __):
+        promise.wait()
+        reply = promise.get_reply()
+        offer = reply.get_value('offer')
+        promise = Gst.Promise.new()
+        webrtcbin.emit('set-local-description', offer, promise)
+        promise.interrupt()
+        self.send_sdp_offer(offer)
+
+    def on_negotiation_needed(self, webrtcbin):
+        promise = Gst.Promise.new_with_change_func(self.on_offer_created, webrtcbin, None)
+        webrtcbin.emit('create-offer', None, promise)
+
+
+    def send_ice_candidate_message(self, _, mlineindex, candidate):
+        icemsg = {'ice': {'candidate': candidate, 'sdpMLineIndex': mlineindex}}
+        # print(icemsg)
+        #formatted_ice = 'ROOM_PEER_MSG {} {}'.format(self.peer_id, icemsg)
+        #loop = asyncio.new_event_loop()
+        #loop.run_until_complete(self.conn.send(formatted_ice))
+        #loop.close()
+        self.connection.send_msg(icemsg)
+
+
 
     def create_pipeline_from_config(self, config):
 
@@ -136,6 +187,7 @@ class Sender:
             if (config["encoder"] == "H265"):
                 parser = Gst.ElementFactory.make("h265parse")
             muxer = Gst.ElementFactory.make("matroskamux")
+            muxer.props.streamable = True
             network_sink = Gst.ElementFactory.make("tcpclientsink")
             network_sink.props.host = "127.0.0.1"
             network_sink.props.port = 25571
@@ -156,6 +208,18 @@ class Sender:
 
             muxer = Gst.ElementFactory.make("mpegtsmux")
             network_sink = Gst.ElementFactory.make("fakesink")
+        elif config["protocol"] == "WebRTC":
+            muxer = self.get_correct_payloader_element(config["encoder"])
+
+            network_sink = Gst.ElementFactory.make("webrtcbin")
+            self.webrtcbin = network_sink
+            network_sink.props.name = "webrtc_send"
+            network_sink.set_property("bundle-policy", "max-bundle")
+            network_sink.set_property("stun-server", 'stun://stun.l.google.com:19302')
+
+            network_sink.connect('on-negotiation-needed', self.on_negotiation_needed)
+            network_sink.connect('on-ice-candidate', self.send_ice_candidate_message)
+
 
 
 

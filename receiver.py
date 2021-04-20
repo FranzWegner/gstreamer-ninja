@@ -36,7 +36,7 @@ class Receiver:
 
 
         print("Creating Receiver")
-        self.connection = SignallingServerConnection("receiver", "sender", "wss://localhost:8443", ROOM_ID, self.msg_handler)
+        self.connection = SignallingServerConnection("receiver_bla", "sender", "wss://localhost:8443", ROOM_ID, self.msg_handler)
         
 
         # needed because run in extra thread
@@ -101,7 +101,7 @@ class Receiver:
         self.pipeline = None
 
         if config["protocol"] == "SRT":
-            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! decodebin ! videoconvert ! gtksink name=gtksink")
+            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! queue ! decodebin ! videoconvert ! gtksink name=gtksink")
         elif config["protocol"] == "UDP":
             self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! videoconvert ! gtksink name=gtksink'.format(config["encoder"], config["encoder"].lower()))
         elif config["protocol"] == "TCP":
@@ -113,6 +113,8 @@ class Receiver:
             self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/playlist.m3u8 ! hlsdemux ! decodebin ! videoconvert ! gtksink name=gtksink")
         elif config["protocol"] == "DASH":
             self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd retries=-1 ! dashdemux ! decodebin ! videoconvert ! gtksink name=gtksink")
+        elif config["protocol"] == "WebRTC":
+            self.pipeline = Gst.parse_launch("videotestsrc ! videoconvert ! gtksink name=gtksink")
 
 
         #WORKS pad_added missing from previous https://stackoverflow.com/questions/49639362/gstreamer-python-decodebin-jpegenc-elements-not-linking
@@ -141,7 +143,7 @@ class Receiver:
         self.pipeline.set_state(Gst.State.PLAYING)
         
         bus = self.pipeline.get_bus()
-        bus.set_sync_handler(self.bus_msg_handler)
+        #bus.set_sync_handler(self.bus_msg_handler)
         
         
 
