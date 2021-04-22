@@ -59,7 +59,7 @@
                         <items>
                           <item translatable="yes">videotestsrc</item>
                           <item translatable="yes">Device</item>
-                          <item translatable="yes">File</item>
+                          <item translatable="yes">filesrc</item>
                         </items>
                       </object>
                       <packing>

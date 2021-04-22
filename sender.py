@@ -18,7 +18,7 @@ from gi.repository import GstSdp
 
 from gi.repository import Gtk, Gst
 
-Gst.debug_set_active(True)
+Gst.debug_set_active(False)
 Gst.debug_set_default_threshold(3)
 
 Gst.init(None)
@@ -106,6 +106,7 @@ class Sender:
     def on_negotiation_needed(self, webrtcbin):
         promise = Gst.Promise.new_with_change_func(self.on_offer_created, webrtcbin, None)
         webrtcbin.emit('create-offer', None, promise)
+        #self.create_data_channel()
 
 
     def send_ice_candidate_message(self, _, mlineindex, candidate):
@@ -117,7 +118,39 @@ class Sender:
         #loop.close()
         self.connection.send_msg(icemsg)
 
+    def on_data_channel_created(self, promise, webrtcbin, _):
+        promise.wait()
+        data_channel = promise.get_reply()
+        print("daten", data_channel)
 
+    def on_data_channel(self, webrtcbin, data_channel, *user_data):
+        print("hallofreunde", data_channel)
+
+    def create_data_channel(self):
+        
+        self.pipeline.set_state(Gst.State.READY)
+        print(self.pipeline.get_state(10)[1])
+        #time.sleep(5)
+        data_channel = self.webrtcbin.emit("create-data-channel", "hallo123", None)
+        print("data_channel_here", data_channel)
+
+    def on_new_transceiver(self, webrtcbin, transceiver, *user_data):
+        print("new_transceiver", transceiver)
+        #promise = Gst.Promise.new_with_change_func(self.on_data_channel_created, webrtcbin, None)
+        #self.create_data_channel()
+        
+
+
+    def print_stats(self):
+        while True:
+            time.sleep(1)
+            if (self.webrtcbin):
+                promise = Gst.Promise.new()
+                self.webrtcbin.emit("get-stats", None, promise)
+                promise.wait()
+                print(promise.get_reply().to_string())
+            else:
+                print(self.pipeline.get_by_name("network_sink").props.stats.to_string())
 
     def create_pipeline_from_config(self, config):
 
@@ -130,15 +163,27 @@ class Sender:
         Gst.init(sys.argv[1:])
         self.pipeline = Gst.Pipeline.new("sender-pipeline")
 
-        source = Gst.ElementFactory.make("videotestsrc")
-        source.props.pattern = "ball"
+        source = None
+        decodebin = None
+
+        if config["source"] == "videotestsrc":
+            source = Gst.ElementFactory.make("videotestsrc")
+            source.props.pattern = "ball"
+        elif config["source"] == "filesrc":
+            source = Gst.ElementFactory.make("filesrc")
+            source.props.location = "B:/python/gst-examples-master-webrtc/webrtc/sendrecv/gst/test.mp4"
+            decodebin = Gst.ElementFactory.make("decodebin")
+            self.pipeline = Gst.parse_launch('filesrc location="E:/2020-10-17_ChaosCity5/Entrance Videos/WINNING CUT/SenzaVolto_2020_WINNING_CUT.avi" ! decodebin ! queue ! videoconvert name=teeme')
+
         #source.set_property("is-live", True)
         tee = Gst.ElementFactory.make("tee")
         preview_queue = Gst.ElementFactory.make("queue")
         network_queue = Gst.ElementFactory.make("queue")
-        preview_sink = Gst.ElementFactory.make("gtksink")
+        preview_sink = Gst.ElementFactory.make("autovideosink")
 
         videoconvert = Gst.ElementFactory.make("videoconvert")
+        videoconvert2 = Gst.ElementFactory.make("videoconvert")
+        videoscale = Gst.ElementFactory.make("videoscale")
         
         encoder = None
         caps = None
@@ -147,20 +192,35 @@ class Sender:
         if config["encoder"] == "H264":
             encoder = Gst.ElementFactory.make("x264enc")
             encoder.set_property("tune", "zerolatency")
-            encoder.set_property("key-int-max", 15)
+            encoder.set_property("key-int-max", 10)
+            encoder.set_property("speed-preset", "faster")
+
             caps = Gst.Caps.from_string("video/x-h264, profile=high")
         elif config["encoder"] == "H265":
             encoder = Gst.ElementFactory.make("x265enc")
             encoder.props.tune = "zerolatency"
-            encoder.set_property("key-int-max", 15)
-            #encoder.props.bitrate = 1024
+            encoder.set_property("key-int-max", 10)
+            encoder.set_property("speed-preset", "ultrafast")
             caps = Gst.Caps.from_string("video/x-h265, profile=main")
         elif config["encoder"] == "VP8":
             encoder = Gst.ElementFactory.make("vp8enc")
             caps = Gst.Caps.from_string("video/x-vp8, profile=0")
+            encoder.set_property("end-usage", "vbr")
+            encoder.set_property("threads", 5)
+            encoder.set_property("max-quantizer", 63)
+            encoder.set_property("min-quantizer", 10)
+            encoder.set_property("deadline", 1)
+
         elif config["encoder"] == "VP9":
             encoder = Gst.ElementFactory.make("vp9enc")
             caps = Gst.Caps.from_string("video/x-vp9, profile=0")
+            encoder.set_property("end-usage", "vbr")
+            encoder.set_property("threads", 5)
+            encoder.set_property("max-quantizer", 63)
+            encoder.set_property("min-quantizer", 30)
+            encoder.set_property("deadline", 1)
+            encoder.set_property("cpu-used", 12)
+            encoder.set_property("target-bitrate", 2500000)
 
 
         muxer = None
@@ -168,11 +228,19 @@ class Sender:
         parser = None
 
         if config["protocol"] == "SRT":
-            muxer = Gst.ElementFactory.make("mpegtsmux")
+
+            if config["encoder"] == "H264" or config["encoder"] == "H265":
+                muxer = Gst.ElementFactory.make("mpegtsmux")
+            else:
+                muxer = Gst.ElementFactory.make("matroskamux")
+                muxer.props.streamable = True
+
+            
             network_sink = Gst.ElementFactory.make("srtsink")
             network_sink.set_property("uri", "srt://192.168.0.119:25570/")
             network_sink.set_property("wait-for-connection", "false")
             network_sink.set_property("mode", 1)
+            
         elif config["protocol"] == "UDP":
             # gst-launch-1.0 -v videotestsrc ! x264enc tune=zerolatency ! rtph264pay ! udpsink host=127.0.0.1 port=25570
             
@@ -214,13 +282,15 @@ class Sender:
             network_sink = Gst.ElementFactory.make("webrtcbin")
             self.webrtcbin = network_sink
             network_sink.props.name = "webrtc_send"
-            network_sink.set_property("bundle-policy", "max-bundle")
+            network_sink.set_property("bundle-policy", "max-compat")
             network_sink.set_property("stun-server", 'stun://stun.l.google.com:19302')
 
             network_sink.connect('on-negotiation-needed', self.on_negotiation_needed)
             network_sink.connect('on-ice-candidate', self.send_ice_candidate_message)
+            network_sink.connect('on-new-transceiver', self.on_new_transceiver)
+            network_sink.connect('on-data-channel', self.on_data_channel)
 
-
+    
 
 
 
@@ -230,12 +300,18 @@ class Sender:
 
         
 
-        self.em.emit("start_sender_preview", preview_sink)
+        #self.em.emit("start_sender_preview", preview_sink)
 
-        self.pipeline.add(source)
+        
+        network_sink.props.name = "network_sink"
+        if not decodebin:
+            self.pipeline.add(source)
+            
+
         self.pipeline.add(tee)
         self.pipeline.add(preview_queue)
         self.pipeline.add(network_queue)
+        self.pipeline.add(videoscale)
         self.pipeline.add(preview_sink)
 
 
@@ -247,10 +323,16 @@ class Sender:
         self.pipeline.add(muxer)
         self.pipeline.add(network_sink)
 
-        source.link(tee)
+        if (decodebin):
+            self.pipeline.get_by_name("teeme").link(tee)
+        else:
+            source.link(tee)
+        
         tee.link(preview_queue)
         tee.link(network_queue)
-        preview_queue.link(preview_sink)
+        preview_queue.link(videoscale)
+        videoscale.link(preview_sink)
+
         network_queue.link(videoconvert)
         videoconvert.link(encoder)
         #encoder.link_filtered(muxer, caps)
@@ -273,6 +355,15 @@ class Sender:
 
         self.pipeline.set_state(Gst.State.PLAYING)
 
+        x = threading.Thread(target=self.print_stats)
+        x.daemon = True
+        x.start()
+
+        # options = Gst.Structure("application/data-channel")
+        # options.set_value("ordered", True)
+        # options.set_value("max-retransmits", 0)
+        # data_channel = self.webrtcbin.emit('create-data-channel', "input", options)
+        # print("hallo_echo", data_channel)
         # wait until EOS or error
         #bus = pipeline.get_bus()
         #msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE,Gst.MessageType.ERROR | Gst.MessageType.EOS)

@@ -2,6 +2,9 @@ import threading
 import time
 import event_emitter as events
 import sys
+import logging
+import asyncio
+#logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -86,7 +89,6 @@ class WindowMain:
             children[0].destroy()
 
         container.pack_start(gtksink.props.widget, True, True, 0)
-
         gtksink.props.widget.show()
 
         #receive like this
@@ -94,7 +96,14 @@ class WindowMain:
     
     def start_receiver_preview(self, gtksink):
 
+        logging.debug(gtksink)
+
         container = self.builder.get_object("receiver_local_preview_container")
+        
+        #detect if gtksink is already running seperate windows, usually when webrtcbin is used
+        parent_window = gtksink.props.widget.get_parent_window()
+        if parent_window:
+            gtksink.props.widget.unparent()
 
         children = container.get_children()
 
@@ -104,6 +113,7 @@ class WindowMain:
         container.pack_start(gtksink.props.widget, True, True, 0)
 
         gtksink.props.widget.show()
+
 
         
 
@@ -147,13 +157,8 @@ if __name__ == "__main__":
         gui_thread.start()
         sender_thread.start()
         receiver_thread.start()
-        while True: time.sleep(100)
+        #while True: time.sleep(100)
+        loop = asyncio.get_event_loop()
+        loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
         pass
-    
-
-
-
-    
-
-
