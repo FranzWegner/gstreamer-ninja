@@ -39,6 +39,7 @@ class Sender:
         self.bus = None
         self.message = None
         self.webrtcbin = None
+        self.benchmark_started = False
 
         #self.create_pipeline_from_config(test_config)
         
@@ -118,28 +119,25 @@ class Sender:
         #loop.close()
         self.connection.send_msg(icemsg)
 
-    def on_data_channel_created(self, promise, webrtcbin, _):
-        promise.wait()
-        data_channel = promise.get_reply()
-        print("daten", data_channel)
-
-    def on_data_channel(self, webrtcbin, data_channel, *user_data):
-        print("hallofreunde", data_channel)
-
-    def create_data_channel(self):
-        
-        self.pipeline.set_state(Gst.State.READY)
-        print(self.pipeline.get_state(10)[1])
-        #time.sleep(5)
-        data_channel = self.webrtcbin.emit("create-data-channel", "hallo123", None)
-        print("data_channel_here", data_channel)
 
     def on_new_transceiver(self, webrtcbin, transceiver, *user_data):
         print("new_transceiver", transceiver)
         #promise = Gst.Promise.new_with_change_func(self.on_data_channel_created, webrtcbin, None)
         #self.create_data_channel()
-        
 
+    def start_benchmark(self):
+        self.benchmark_started = True
+        print("Start the benchmark!")
+
+    def bus_msg_handler(self, bus, message, *user_data):
+        if message.type == Gst.MessageType.ELEMENT:
+            videoanalyse_struc = message.get_structure()
+            luma = videoanalyse_struc.get_value("luma-average")
+            timestamp = videoanalyse_struc.get_value("timestamp")
+            if (luma and luma < 0.01):
+                if not self.benchmark_started:
+                    self.start_benchmark()
+                
 
     def print_stats(self):
         while True:
@@ -174,11 +172,18 @@ class Sender:
             source.props.location = "B:/python/gst-examples-master-webrtc/webrtc/sendrecv/gst/test.mp4"
             decodebin = Gst.ElementFactory.make("decodebin")
             self.pipeline = Gst.parse_launch('filesrc location="E:/2020-10-17_ChaosCity5/Entrance Videos/WINNING CUT/SenzaVolto_2020_WINNING_CUT.avi" ! decodebin ! queue ! videoconvert name=teeme')
+        elif config["source"] == "benchmarkfilesrc":
+            #unnesccary
+            source = Gst.ElementFactory.make("filesrc")
+            decodebin = Gst.ElementFactory.make("decodebin")
+            self.pipeline = Gst.parse_launch('filesrc location="B:/python/sample_files_custom/Custom_2.mp4" ! decodebin ! queue ! videoconvert name=teeme')
+
 
         #source.set_property("is-live", True)
         tee = Gst.ElementFactory.make("tee")
         preview_queue = Gst.ElementFactory.make("queue")
         network_queue = Gst.ElementFactory.make("queue")
+        videoanalyse = Gst.ElementFactory.make("videoanalyse")
         preview_sink = Gst.ElementFactory.make("autovideosink")
 
         videoconvert = Gst.ElementFactory.make("videoconvert")
@@ -288,7 +293,16 @@ class Sender:
             network_sink.connect('on-negotiation-needed', self.on_negotiation_needed)
             network_sink.connect('on-ice-candidate', self.send_ice_candidate_message)
             network_sink.connect('on-new-transceiver', self.on_new_transceiver)
-            network_sink.connect('on-data-channel', self.on_data_channel)
+            #network_sink.connect('on-data-channel', self.on_data_channel)
+        elif config["protocol"] == "RIST":
+            #gst-launch-1.0 filesrc location=B:/python/sample_files_custom/Custom_1.mp4 ! qtdemux ! h264parse config-interval=-1 ! mpegtsmux ! rtpmp2tpay ! ristsink address=127.0.0.1 port=5004
+            
+            parser = Gst.ElementFactory.make("mpegtsmux")
+            muxer = Gst.ElementFactory.make("rtpmp2tpay")
+            network_sink = Gst.ElementFactory.make("ristsink")
+            network_sink.props.address = "127.0.0.1"
+            network_sink.props.port = 25570
+
 
     
 
@@ -312,6 +326,7 @@ class Sender:
         self.pipeline.add(preview_queue)
         self.pipeline.add(network_queue)
         self.pipeline.add(videoscale)
+        self.pipeline.add(videoanalyse)
         self.pipeline.add(preview_sink)
 
 
@@ -331,7 +346,8 @@ class Sender:
         tee.link(preview_queue)
         tee.link(network_queue)
         preview_queue.link(videoscale)
-        videoscale.link(preview_sink)
+        videoscale.link(videoanalyse)
+        videoanalyse.link(preview_sink)
 
         network_queue.link(videoconvert)
         videoconvert.link(encoder)
@@ -355,9 +371,12 @@ class Sender:
 
         self.pipeline.set_state(Gst.State.PLAYING)
 
+        bus = self.pipeline.get_bus()
+        #bus.set_sync_handler(self.bus_msg_handler)
+
         x = threading.Thread(target=self.print_stats)
         x.daemon = True
-        x.start()
+        #x.start()
 
         # options = Gst.Structure("application/data-channel")
         # options.set_value("ordered", True)

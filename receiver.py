@@ -19,8 +19,8 @@ from gi.repository import GstSdp
 
 from gi.repository import Gtk, Gst, GObject, GLib
 
-Gst.debug_set_active(False)
-Gst.debug_set_default_threshold(3)
+Gst.debug_set_active(True)
+Gst.debug_set_default_threshold(4)
 
 Gst.init(None)
 Gst.init_check(None)
@@ -57,10 +57,27 @@ class Receiver:
         self.connection.send_msg({"update_sender_config": config})
     
     def bus_msg_handler(self, bus, message, *user_data):
+
+        print("typ", message.type)
+
         if message.type == Gst.MessageType.ERROR:
             err, debug = message.parse_error()
             print("hahaha", err, debug)
-            self.retry_pipeline()
+            #self.retry_pipeline()
+        elif message.type == Gst.MessageType.WARNING:
+            msg = message.parse_warning()
+            print("warning_message", msg)
+        elif message.type == Gst.MessageType.QOS:
+            live, running_time, stream_time, timestamp, duration = message.parse_qos()
+            jitter, proportion, quality = message.parse_qos_values()
+            _format, processed, dropped = message.parse_qos_stats()
+            print(live, running_time, stream_time, timestamp, duration)
+            print(jitter, proportion, quality)
+            print(_format, processed, dropped)
+        elif message.type == Gst.MessageType.ELEMENT:
+            struc = message.get_structure()
+            #print(struc.to_string())
+
     
     def retry_pipeline(self):
 
@@ -106,7 +123,7 @@ class Receiver:
             q = Gst.ElementFactory.make('queue')
             q2 = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('videoconvert')
-            sink = Gst.ElementFactory.make('autovideosink')
+            sink = Gst.ElementFactory.make('fpsdisplaysink')
             sink.props.name = "gtksink"
             self.preview_sink = sink
             #self.em.emit("start_receiver_preview", sink)
@@ -138,6 +155,7 @@ class Receiver:
         decodebin.connect('pad-added', self.on_incoming_decodebin_stream)
         self.pipeline.add(decodebin)
         decodebin.sync_state_with_parent()
+        #self.webrtcbin.props.latency = 5000
         self.webrtcbin.link(decodebin)
     
     def update_receiver_config(self, config):
@@ -171,23 +189,26 @@ class Receiver:
         self.pipeline = None
 
         if config["protocol"] == "SRT":
-            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! queue ! decodebin ! queue ! videoconvert ! autovideosink")
+            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! queue ! decodebin ! queue ! videoconvert ! fpsdisplaysink")
         elif config["protocol"] == "UDP":
-            self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! queue ! videoconvert ! videoscale ! autovideosink'.format(config["encoder"], config["encoder"].lower()))
+            self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink'.format(config["encoder"], config["encoder"].lower()))
         elif config["protocol"] == "TCP":
-            self.pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! queue ! matroskademux ! queue ! decodebin ! queue ! videoconvert ! videoscale ! autovideosink')
+            self.pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! queue ! matroskademux ! queue ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink')
         elif config["protocol"] == "RTMP":
             #gst-launch-1.0 -v rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! videoconvert ! autovideosink
-            self.pipeline = Gst.parse_launch('rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! queue ! videoconvert ! videoscale ! autovideosink')
+            self.pipeline = Gst.parse_launch('rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink')
         elif config["protocol"] == "HLS":
-            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/playlist.m3u8 ! hlsdemux ! decodebin ! queue ! videoconvert ! videoscale ! autovideosink")
+            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/playlist.m3u8 ! hlsdemux ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink")
         elif config["protocol"] == "DASH":
-            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd retries=-1 ! dashdemux ! decodebin ! queue ! videoconvert ! videoscale ! autovideosink")
+            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd retries=-1 ! dashdemux ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink")
         elif config["protocol"] == "WebRTC":
             self.pipeline = Gst.parse_launch("videotestsrc ! videoconvert ! queue ! vp8enc ! rtpvp8pay ! queue ! webrtcbin name=webrtc_receive bundle-policy=max-bundle stun-server=stun://stun.l.google.com:19302")
             self.webrtcbin = self.pipeline.get_by_name('webrtc_receive')
             self.webrtcbin.connect('on-ice-candidate', self.send_ice_candidate_message)
             self.webrtcbin.connect('pad-added', self.on_incoming_stream)
+        elif config["protocol"] == "RIST":
+            self.pipeline = Gst.parse_launch("ristsrc address=0.0.0.0 port=25570 ! rtpmp2tdepay ! decodebin ! videoconvert ! fpsdisplaysink")
+
 
 
         #WORKS pad_added missing from previous https://stackoverflow.com/questions/49639362/gstreamer-python-decodebin-jpegenc-elements-not-linking
@@ -241,7 +262,7 @@ class Receiver:
         self.pipeline.set_state(Gst.State.PLAYING)
         
         bus = self.pipeline.get_bus()
-        #bus.set_sync_handler(self.bus_msg_handler)
+        bus.set_sync_handler(self.bus_msg_handler)
         
         
 

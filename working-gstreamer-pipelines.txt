@@ -3,7 +3,7 @@ Send
 gst-launch-1.0 -v videotestsrc ! x264enc tune=zerolatency ! rtph264pay ! udpsink host=127.0.0.1 port=25570
 
 Receive
-gst-launch-1.0 -v udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264, payload=(int)96" ! rtph264depay ! decodebin ! videoconvert ! autovideosink
+gst-launch-1.0 -v udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H264, payload=(int)96" ! queue ! rtph264depay ! decodebin ! queue ! videoconvert ! autovideosink
 
 H264 over TCP without packeting
 

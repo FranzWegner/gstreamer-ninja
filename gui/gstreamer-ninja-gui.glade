@@ -60,6 +60,7 @@
                           <item translatable="yes">videotestsrc</item>
                           <item translatable="yes">Device</item>
                           <item translatable="yes">filesrc</item>
+                          <item translatable="yes">benchmarkfilesrc</item>
                         </items>
                       </object>
                       <packing>
@@ -104,6 +105,7 @@
                           <item translatable="yes">HLS</item>
                           <item translatable="yes">UDP</item>
                           <item translatable="yes">TCP</item>
+                          <item translatable="yes">RIST</item>
                         </items>
                       </object>
                       <packing>
