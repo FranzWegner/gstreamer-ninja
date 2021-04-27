@@ -142,16 +142,6 @@ class Sender:
                     self.start_benchmark()
                 
 
-    def print_stats(self):
-        while True:
-            time.sleep(1)
-            if (self.webrtcbin):
-                promise = Gst.Promise.new()
-                self.webrtcbin.emit("get-stats", None, promise)
-                promise.wait()
-                print(promise.get_reply().to_string())
-            else:
-                print(self.pipeline.get_by_name("network_sink").props.stats.to_string())
 
     def create_pipeline_from_config(self, config):
 
@@ -403,21 +393,6 @@ class Sender:
         if self.benchmark_mode:
             bus.set_sync_handler(self.bus_msg_handler)
 
-        #x = threading.Thread(target=self.print_stats)
-        #x.daemon = True
-        #x.start()
-
-        # options = Gst.Structure("application/data-channel")
-        # options.set_value("ordered", True)
-        # options.set_value("max-retransmits", 0)
-        # data_channel = self.webrtcbin.emit('create-data-channel', "input", options)
-        # print("hallo_echo", data_channel)
-        # wait until EOS or error
-        #bus = pipeline.get_bus()
-        #msg = bus.timed_pop_filtered(Gst.CLOCK_TIME_NONE,Gst.MessageType.ERROR | Gst.MessageType.EOS)
-
-        # free resources
-        #pipeline.set_state(Gst.State.NULL)
 
     def start_ffmpeg(self, *args):
         time.sleep(1)

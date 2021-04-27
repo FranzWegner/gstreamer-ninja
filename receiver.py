@@ -7,6 +7,9 @@ import json
 import pydivert
 import random
 import csv
+import os
+import datetime
+
 
 
 from connect import SignallingServerConnection
@@ -37,9 +40,8 @@ class Receiver:
     def __init__(self, e_emitter, room_id):
         
         self.em = e_emitter
-        self.em.on("update_sender_config", self.update_sender_config)
-        self.em.on("update_receiver_config", self.update_receiver_config)
-        self.em.on("sender_benchmark_started", self.create_new_benchmark)
+        self.setup_events()
+
         self.pipeline = None
         self.config = None
         self.webrtcbin = None
@@ -49,6 +51,8 @@ class Receiver:
         self.benchmark_mode = False
         self.decoding_errors = 0
         self.chance_of_dropping_packets = 0.00
+        self.network_filter = ""
+        self.benchmark_duration = None
         self.network_throttle_thread = threading.Thread(target=self.start_traffic_control)
         self.network_throttle_thread.daemon = True
         self.room_id = room_id
@@ -67,6 +71,12 @@ class Receiver:
         loop.run_until_complete(self.connection.connect())
         loop.run_until_complete(self.connection.loop())
 
+    def setup_events(self):
+        self.em.on("update_sender_config", self.update_sender_config)
+        self.em.on("update_receiver_config", self.update_receiver_config)
+        self.em.on("sender_benchmark_started", self.create_new_benchmark)
+        self.em.on("restart_receiver", self.retry_pipeline)
+
     def handle_gst_log_message(self, category, level, file, function, line, obj, message, *user_data):
         #print(category.get_name(), level, message.get())
 
@@ -81,15 +91,11 @@ class Receiver:
 
     def start_traffic_control(self):
         #start as admin
-        with pydivert.WinDivert("outbound and (tcp.DstPort == 5000)") as w:
+        with pydivert.WinDivert(self.network_filter) as w:
             for packet in w:
-                #print(chance)
                 c = random.random()
                 if self.benchmark_started and (c < self.chance_of_dropping_packets):
-                    #print(chance)
-                    print("current_chance", c)
-                    #w.send(packet)
-                    
+                    pass
                 else:
                     w.send(packet)
                     
@@ -102,24 +108,7 @@ class Receiver:
 
     
     def bus_msg_handler(self, bus, message, *user_data):
-
-        #print("typ", message.type)
-
-        if message.type == Gst.MessageType.ERROR:
-            err, debug = message.parse_error()
-            print("error_message", err, debug)
-            #self.retry_pipeline()
-        elif message.type == Gst.MessageType.WARNING:
-            msg = message.parse_warning()
-            print("warning_message", msg)
-        elif message.type == Gst.MessageType.QOS:
-            live, running_time, stream_time, timestamp, duration = message.parse_qos()
-            jitter, proportion, quality = message.parse_qos_values()
-            _format, processed, dropped = message.parse_qos_stats()
-            #print(live, running_time, stream_time, timestamp, duration)
-            #print(jitter, proportion, quality)
-            #print(_format, processed, dropped)
-        elif message.type == Gst.MessageType.ELEMENT:
+        if message.type == Gst.MessageType.ELEMENT:
             videoanalyse_struc = message.get_structure()
             luma = videoanalyse_struc.get_value("luma-average")
             if (luma and luma < 0.01):
@@ -146,7 +135,7 @@ class Receiver:
     def start_measurements(self):
         fpsdisplaysink = self.pipeline.get_by_name("displaysink")
         seconds_counter = 0
-        while seconds_counter < 30:
+        while seconds_counter < self.benchmark_duration:
             frames_rendered = fpsdisplaysink.get_property("frames-rendered")
             #print("frames_rendered", frames_rendered)
             self.benchmark["frames_rendered"].append(frames_rendered)
@@ -162,7 +151,11 @@ class Receiver:
 
     def save_benchmark_to_file(self):
         #new line for avoiding extra line https://docs.python.org/3/library/csv.html at bottom
-        with open ("test_file.csv", newline='', mode="w") as benchmark_file:
+
+        filename = self.config["protocol"] + "_" + self.config["benchmark_duration"] + "s_" + self.config["benchmark_packet_loss_percentage"] + "percent_" + self.config["encoder"] + "_" + datetime.datetime.now().strftime("%Y_%m_%d__%H_%M_%S") + ".csv"
+        cur_path = os.path.dirname(__file__)
+        new_path = os.path.relpath('./benchmark/' + filename, cur_path)
+        with open (new_path, newline='', mode="w") as benchmark_file:
          
             file_writer = csv.writer(benchmark_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
@@ -175,29 +168,11 @@ class Receiver:
         print("File saved")
     
     def retry_pipeline(self):
-
-
-        state = self.pipeline.get_state(10)[1]
-        print("pipeline_state", state)
-
-        if state == Gst.State.READY:
-            print("Retrying pipeline in two seconds")
-            time.sleep(2)
-            self.pipeline.set_state(Gst.State.NULL)
-            self.pipeline.set_state(Gst.State.PLAYING)
+        self.update_receiver_config(self.config)
 
         
 
         
-
-    async def wait_for_playlist(self):
-        #bullshit, not async
-        r = requests.get('http://127.0.0.1:5000/hls/playlist.m3u8')
-        while r.status_code == 404:
-            print(r.status_code)
-            await asyncio.sleep(1)
-            r = requests.get('http://127.0.0.1:5000/hls/playlist.m3u8')
-        return True
 
     def send_ice_candidate_message(self, _, mlineindex, candidate):
         icemsg = {'ice': {'candidate': candidate, 'sdpMLineIndex': mlineindex}}
@@ -218,19 +193,22 @@ class Receiver:
             q = Gst.ElementFactory.make('queue')
             q2 = Gst.ElementFactory.make('queue')
             conv = Gst.ElementFactory.make('videoconvert')
+            analyse = Gst.ElementFactory.make('videoanalyse')
             sink = Gst.ElementFactory.make('fpsdisplaysink')
-            sink.props.name = "gtksink"
+            sink.props.name = "displaysink"
             self.preview_sink = sink
             #self.em.emit("start_receiver_preview", sink)
             #self.pipe.add(q, conv, sink) https://github.com/centricular/gstwebrtc-demos/issues/45#issuecomment-441468933
             self.pipeline.add(q)
             self.pipeline.add(conv)
+            self.pipeline.add(analyse)
             self.pipeline.add(q2)
             self.pipeline.add(sink)
             self.pipeline.sync_children_states()
             pad.link(q.get_static_pad('sink'))
             q.link(conv)
-            conv.link(sink)
+            conv.link(analyse)
+            analyse.link(sink)
 
 
 
@@ -241,7 +219,6 @@ class Receiver:
 
     def on_incoming_stream(self, _, pad):
         print("Receiving video...")
-        promise = Gst.Promise.new()
 
         if pad.direction != Gst.PadDirection.SRC:
             return
@@ -253,17 +230,21 @@ class Receiver:
         #self.webrtcbin.props.latency = 5000
         self.webrtcbin.link(decodebin)
     
-    def fps_measurements_callback(self, fpsdisplaysink, fps, droprate, avgfps, *udata):
-        if self.benchmark_started:
-            pass
-            #self.benchmark["fps"].append(fps)
-            #print(self.benchmark)
-
     def update_receiver_config(self, config):
         self.em.emit("change_label", label_id="receiver_configuration_label", new_text=json.dumps(config))
+
+
         Gst.init(sys.argv[1:])
 
         self.config = config
+
+        self.chance_of_dropping_packets = int(config["benchmark_packet_loss_percentage"]) / 100
+        self.network_filter = config["benchmark_network_filter"]
+        self.benchmark_duration = int(config["benchmark_duration"])
+
+        print("benchmark_settings", self.chance_of_dropping_packets, self.network_filter, self.benchmark_duration)
+
+
         #GObject.MainContext.push_thread_default(GObject.MainContext())
         
 
@@ -323,46 +304,6 @@ class Receiver:
 
 
         #pipeline.set_state(Gst.State.PLAYING)
-
-        if config["protocol"] != "WebRTC":
-            pass
-            # last_element = self.pipeline.get_by_name("decodeme")
-            # decodebin = Gst.ElementFactory.make("decodebin")
-            # queue = Gst.ElementFactory.make("queue")
-            # videoconvert = Gst.ElementFactory.make("videoconvert")
-            # videoscale = Gst.ElementFactory.make("videoscale")
-            # preview_sink = Gst.ElementFactory.make("autovideosink")
-            # preview_sink.props.name = "gtksink"
-
-            # self.pipeline.add(decodebin)
-            # self.pipeline.add(queue)
-            # self.pipeline.add(videoconvert)
-            # self.pipeline.add(videoscale)
-            # self.pipeline.add(preview_sink)
-
-            # #self.pipeline.sync_children_states()
-            # last_element.link(decodebin)
-            # decodebin.link(queue)
-            # queue.link(videoconvert)
-            # videoconvert.link(videoscale)
-            # videoscale.link(preview_sink)
-
-
-            #gtksink = self.pipeline.get_by_name("gtksink")
-            #self.preview_sink = gtksink
-            #self.em.emit("start_receiver_preview", gtksink)
-
-        #pipeline.set_state(Gst.State.READY)
-
-        if config["protocol"] == "HLS":
-            pass
-            #block until return 200 instead of 404
-            #loop = asyncio.new_event_loop()
-            #loop.run_until_complete(self.wait_for_playlist())
-           
-
-
-        
         
         bus = self.pipeline.get_bus()
 
