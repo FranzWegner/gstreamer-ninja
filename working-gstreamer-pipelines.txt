@@ -71,3 +71,9 @@ gst-launch-1.0 -v videotestsrc ! x264enc ! avdec_h264 ! videoconvert ! queue max
  RIST Send and Receive
 gst-launch-1.0 filesrc location=B:/python/sample_files_custom/Custom_1.mp4 ! qtdemux ! h264parse config-interval=-1 ! mpegtsmux ! rtpmp2tpay ! ristsink address=127.0.0.1 port=5004
    gst-launch-1.0 ristsrc address=0.0.0.0 port=5004 ! rtpmp2tdepay ! decodebin ! videoconvert ! autovideosink
+
+   Send H264 to FFMPEG
+
+   gst-launch-1.0 -v videotestsrc is-live=true pattern=ball ! timeoverlay ! x264enc tune=zerolatency key-int-max=1 option-string="scenecut=0" ! udpsink host=127.0.0.1 port=25570
+
+   ffmpeg -i "udp://127.0.0.1:25570" -c copy -f hls -hls_time 2 -hls_list_size 2 -hls_init_time 2 -method POST http://127.0.0.1:5000/hls/out.m3u8

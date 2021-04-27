@@ -4,6 +4,7 @@ import json
 import sys
 import logging
 import time
+import subprocess
 
 from connect import SignallingServerConnection
 
@@ -40,6 +41,7 @@ class Sender:
         self.message = None
         self.webrtcbin = None
         self.benchmark_started = False
+        self.benchmark_mode = False
 
         #self.create_pipeline_from_config(test_config)
         
@@ -128,12 +130,12 @@ class Sender:
     def start_benchmark(self):
         self.benchmark_started = True
         print("Start the benchmark!")
+        self.em.emit("sender_benchmark_started", time.time_ns())
 
     def bus_msg_handler(self, bus, message, *user_data):
         if message.type == Gst.MessageType.ELEMENT:
             videoanalyse_struc = message.get_structure()
             luma = videoanalyse_struc.get_value("luma-average")
-            timestamp = videoanalyse_struc.get_value("timestamp")
             if (luma and luma < 0.01):
                 if not self.benchmark_started:
                     self.start_benchmark()
@@ -174,6 +176,7 @@ class Sender:
             self.pipeline = Gst.parse_launch('filesrc location="E:/2020-10-17_ChaosCity5/Entrance Videos/WINNING CUT/SenzaVolto_2020_WINNING_CUT.avi" ! decodebin ! queue ! videoconvert name=teeme')
         elif config["source"] == "benchmarkfilesrc":
             #unnesccary
+            self.benchmark_mode = True
             source = Gst.ElementFactory.make("filesrc")
             decodebin = Gst.ElementFactory.make("decodebin")
             self.pipeline = Gst.parse_launch('filesrc location="B:/python/sample_files_custom/Custom_2.mp4" ! decodebin ! queue ! videoconvert name=teeme')
@@ -231,6 +234,7 @@ class Sender:
         muxer = None
         network_sink = None
         parser = None
+        ffmpeg_string = None
 
         if config["protocol"] == "SRT":
 
@@ -273,9 +277,22 @@ class Sender:
             #gst-launch-1.0 videotestsrc is-live=true ! x264enc ! mpegtsmux ! hlssink max-files=5 target-duration=2 playlist-location="B:/python/gstreamer-ninja/tmp/hls/playlist.m3u8" location=B:/python/gstreamer-ninja/tmp/hls/segment%05d.ts
             muxer = Gst.ElementFactory.make("mpegtsmux")
             network_sink = Gst.ElementFactory.make("hlssink")
-            network_sink.set_property("playlist-location", "B:/python/gstreamer-ninja/http-server/hls/playlist.m3u8")
+            network_sink.set_property("playlist-location", "B:/python/gstreamer-ninja/http-server/hls/out.m3u8")
             network_sink.set_property("location", "B:/python/gstreamer-ninja/http-server/hls/segment%05d.ts")
             network_sink.set_property("target-duration", 2)
+        elif config["protocol"] == "HLS FFMPEG":
+            #gst-launch-1.0 videotestsrc is-live=true ! x264enc ! mpegtsmux ! hlssink max-files=5 target-duration=2 playlist-location="B:/python/gstreamer-ninja/tmp/hls/playlist.m3u8" location=B:/python/gstreamer-ninja/tmp/hls/segment%05d.ts
+            
+            #encoder = Gst.ElementFactory.make("identity")
+            #encoder.set_property("config-interval", -1)
+            muxer = Gst.ElementFactory.make("identity")
+            network_sink = Gst.ElementFactory.make("udpsink")
+            network_sink.props.host = "127.0.0.1"
+            network_sink.props.port = 25570
+            ffmpeg_string = "HLS"
+
+           
+
         elif config["protocol"] == "DASH":
             #dummy
 
@@ -368,14 +385,25 @@ class Sender:
         if config["protocol"] == "DASH":
             self.pipeline = Gst.parse_launch("videotestsrc is-live=true pattern=ball ! videoconvert ! x264enc ! dashsink.video_0 dashsink name=dashsink max-files=5 target-duration=2 mpd-root-path=B:/python/gstreamer-ninja/http-server/dash/ dynamic=true minimum-update-period=1000")
             #self.em.emit("start_sender_preview", self.pipeline.get_by_name("gtksink"))
+        elif config["protocol"] == "HLS FFMPEG" and config["source"] == "benchmarkfilesrc":
+            self.pipeline = Gst.parse_launch('filesrc location="B:/python/sample_files_custom/Custom_2.mp4" ! qtdemux ! h264parse config-interval=-1 ! tee name=t t. ! queue ! mpegtsmux ! udpsink host=127.0.0.1 port=25570 t. ! queue ! avdec_h264 ! videoconvert ! videoanalyse ! autovideosink')
+
+
+        if ffmpeg_string:
+            ffmpeg_thread = threading.Thread(target=self.start_ffmpeg, args=[ffmpeg_string])
+            ffmpeg_thread.daemon = True
+            ffmpeg_thread.start()
 
         self.pipeline.set_state(Gst.State.PLAYING)
 
-        bus = self.pipeline.get_bus()
-        #bus.set_sync_handler(self.bus_msg_handler)
 
-        x = threading.Thread(target=self.print_stats)
-        x.daemon = True
+        bus = self.pipeline.get_bus()
+
+        if self.benchmark_mode:
+            bus.set_sync_handler(self.bus_msg_handler)
+
+        #x = threading.Thread(target=self.print_stats)
+        #x.daemon = True
         #x.start()
 
         # options = Gst.Structure("application/data-channel")
@@ -389,6 +417,13 @@ class Sender:
 
         # free resources
         #pipeline.set_state(Gst.State.NULL)
+
+    def start_ffmpeg(self, *args):
+        time.sleep(1)
+        if (args[0] == "HLS"):
+            subprocess.call('ffmpeg -i "udp://127.0.0.1:25570" -c copy -f hls -hls_time 2 -hls_list_size 5 -hls_init_time 2 -method POST http://127.0.0.1:5000/hls/out.m3u8', shell=True)
+        else:
+            pass
 
 
 

@@ -6,6 +6,8 @@ import requests
 import json
 import pydivert
 import random
+import subprocess
+#import os
 
 
 
@@ -142,6 +144,8 @@ def start_traffic_control():
             
 
 if __name__ == "__main__":
+
+    subprocess.call('ffmpeg -i "udp://127.0.0.1:25570" -c copy -f hls -hls_time 2 -hls_list_size 5 -hls_init_time 2 -method POST http://127.0.0.1:5000/hls/out.m3u8', shell=True)
 
     print("hello?")
     

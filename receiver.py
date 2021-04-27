@@ -4,6 +4,9 @@ import sys
 import time
 import requests
 import json
+import pydivert
+import random
+import csv
 
 
 from connect import SignallingServerConnection
@@ -20,7 +23,7 @@ from gi.repository import GstSdp
 from gi.repository import Gtk, Gst, GObject, GLib
 
 Gst.debug_set_active(True)
-Gst.debug_set_default_threshold(4)
+Gst.debug_set_default_threshold(3)
 
 Gst.init(None)
 Gst.init_check(None)
@@ -36,10 +39,20 @@ class Receiver:
         self.em = e_emitter
         self.em.on("update_sender_config", self.update_sender_config)
         self.em.on("update_receiver_config", self.update_receiver_config)
+        self.em.on("sender_benchmark_started", self.create_new_benchmark)
         self.pipeline = None
         self.config = None
         self.webrtcbin = None
         self.preview_sink = None
+        self.benchmark = None
+        self.benchmark_started = False
+        self.benchmark_mode = False
+        self.decoding_errors = 0
+        self.chance_of_dropping_packets = 0.00
+        self.network_throttle_thread = threading.Thread(target=self.start_traffic_control)
+        self.network_throttle_thread.daemon = True
+
+        Gst.debug_add_log_function(self.handle_gst_log_message)
 
 
         print("Creating Receiver")
@@ -53,16 +66,46 @@ class Receiver:
         loop.run_until_complete(self.connection.connect())
         loop.run_until_complete(self.connection.loop())
 
+    def handle_gst_log_message(self, category, level, file, function, line, obj, message, *user_data):
+        #print(category.get_name(), level, message.get())
+
+        if self.benchmark_mode and self.benchmark_started:
+            if category.get_name().startswith("libav") and level == Gst.DebugLevel.ERROR:
+                #print("log_error", message.get())
+                self.decoding_errors += 1
+    
+    def create_new_benchmark(self, sender_timestamp):
+        self.benchmark = {"sender_start": sender_timestamp}
+        print(self.benchmark)
+
+    def start_traffic_control(self):
+        #start as admin
+        with pydivert.WinDivert("outbound and (tcp.DstPort == 5000)") as w:
+            for packet in w:
+                #print(chance)
+                c = random.random()
+                if self.benchmark_started and (c < self.chance_of_dropping_packets):
+                    #print(chance)
+                    print("current_chance", c)
+                    #w.send(packet)
+                    
+                else:
+                    w.send(packet)
+                    
+                
+                
+    
+
     def update_sender_config(self, config):
         self.connection.send_msg({"update_sender_config": config})
     
     def bus_msg_handler(self, bus, message, *user_data):
 
-        print("typ", message.type)
+        #print("typ", message.type)
 
         if message.type == Gst.MessageType.ERROR:
             err, debug = message.parse_error()
-            print("hahaha", err, debug)
+            print("error_message", err, debug)
             #self.retry_pipeline()
         elif message.type == Gst.MessageType.WARNING:
             msg = message.parse_warning()
@@ -71,13 +114,63 @@ class Receiver:
             live, running_time, stream_time, timestamp, duration = message.parse_qos()
             jitter, proportion, quality = message.parse_qos_values()
             _format, processed, dropped = message.parse_qos_stats()
-            print(live, running_time, stream_time, timestamp, duration)
-            print(jitter, proportion, quality)
-            print(_format, processed, dropped)
+            #print(live, running_time, stream_time, timestamp, duration)
+            #print(jitter, proportion, quality)
+            #print(_format, processed, dropped)
         elif message.type == Gst.MessageType.ELEMENT:
-            struc = message.get_structure()
-            #print(struc.to_string())
+            videoanalyse_struc = message.get_structure()
+            luma = videoanalyse_struc.get_value("luma-average")
+            if (luma and luma < 0.01):
+                if not self.benchmark_started:
+                    self.start_benchmark()
 
+    def start_benchmark(self):
+        print("Start Benchmark, receiver side")
+        self.network_throttle_thread.start()
+        #self.start_traffic_control()
+        self.benchmark_started = True
+        self.decoding_errors = 0
+        if self.benchmark:
+            self.benchmark["receiver_start"] = time.time_ns()
+            self.benchmark["frames_rendered"] = []
+            self.benchmark["decoding_errors"] = []
+            print(self.benchmark)
+            print("Latency in ms", (self.benchmark["receiver_start"] - self.benchmark["sender_start"]) / 1000000 )
+
+            x = threading.Thread(target=self.start_measurements)
+            x.daemon = False
+            x.start()
+
+    def start_measurements(self):
+        fpsdisplaysink = self.pipeline.get_by_name("displaysink")
+        seconds_counter = 0
+        while seconds_counter < 30:
+            frames_rendered = fpsdisplaysink.get_property("frames-rendered")
+            #print("frames_rendered", frames_rendered)
+            self.benchmark["frames_rendered"].append(frames_rendered)
+            self.benchmark["decoding_errors"].append(self.decoding_errors)
+            time.sleep(1)
+            seconds_counter += 1
+        self.stop_benchmark()
+    
+    def stop_benchmark(self):
+        self.benchmark_started = False
+        print("final_benchmark", self.benchmark)
+        self.save_benchmark_to_file()
+
+    def save_benchmark_to_file(self):
+        #new line for avoiding extra line https://docs.python.org/3/library/csv.html at bottom
+        with open ("test_file.csv", newline='', mode="w") as benchmark_file:
+         
+            file_writer = csv.writer(benchmark_file, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+
+            file_writer.writerow(["Frames Rendered", "Decoding Errors", "Start Sender", "Start Receiver"])
+            file_writer.writerow(["", "", self.benchmark["sender_start"], self.benchmark["receiver_start"]])
+
+            for i,value in enumerate(self.benchmark["frames_rendered"]):
+                file_writer.writerow([self.benchmark["frames_rendered"][i], self.benchmark["decoding_errors"][i]])
+        
+        print("File saved")
     
     def retry_pipeline(self):
 
@@ -158,6 +251,12 @@ class Receiver:
         #self.webrtcbin.props.latency = 5000
         self.webrtcbin.link(decodebin)
     
+    def fps_measurements_callback(self, fpsdisplaysink, fps, droprate, avgfps, *udata):
+        if self.benchmark_started:
+            pass
+            #self.benchmark["fps"].append(fps)
+            #print(self.benchmark)
+
     def update_receiver_config(self, config):
         Gst.init(sys.argv[1:])
 
@@ -188,18 +287,21 @@ class Receiver:
 
         self.pipeline = None
 
+        if config["source"] == "benchmarkfilesrc":
+            self.benchmark_mode = True
+
         if config["protocol"] == "SRT":
-            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! queue ! decodebin ! queue ! videoconvert ! fpsdisplaysink")
+            self.pipeline = Gst.parse_launch("srtsrc uri=srt://:25570 ! queue ! decodebin ! queue ! videoconvert ! videoanalyse ! fpsdisplaysink signal-fps-measurements=false name=displaysink")
         elif config["protocol"] == "UDP":
-            self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink'.format(config["encoder"], config["encoder"].lower()))
+            self.pipeline = Gst.parse_launch('udpsrc port=25570 caps = "application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string){}, payload=(int)96" ! queue ! rtp{}depay ! decodebin ! queue ! videoconvert ! videoanalyse ! fpsdisplaysink signal-fps-measurements=false name=displaysink'.format(config["encoder"], config["encoder"].lower()))
         elif config["protocol"] == "TCP":
-            self.pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! queue ! matroskademux ! queue ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink')
+            self.pipeline = Gst.parse_launch('tcpserversrc host=127.0.0.1 port=25571 ! queue ! matroskademux ! queue ! decodebin ! queue ! videoconvert ! videoanalyse ! fpsdisplaysink signal-fps-measurements=false name=displaysink')
         elif config["protocol"] == "RTMP":
             #gst-launch-1.0 -v rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! videoconvert ! autovideosink
             self.pipeline = Gst.parse_launch('rtmpsrc location=rtmp://127.0.0.1:25570/live/obs ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink')
-        elif config["protocol"] == "HLS":
-            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/playlist.m3u8 ! hlsdemux ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink")
-        elif config["protocol"] == "DASH":
+        elif config["protocol"].startswith("HLS"):
+            self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/hls/out.m3u8 ! hlsdemux ! decodebin ! queue ! videoconvert ! videoanalyse ! videoscale ! fpsdisplaysink")
+        elif config["protocol"].startswith("DASH"):
             self.pipeline = Gst.parse_launch("souphttpsrc location=http://127.0.0.1:5000/dash/dash.mpd retries=-1 ! dashdemux ! decodebin ! queue ! videoconvert ! videoscale ! fpsdisplaysink")
         elif config["protocol"] == "WebRTC":
             self.pipeline = Gst.parse_launch("videotestsrc ! videoconvert ! queue ! vp8enc ! rtpvp8pay ! queue ! webrtcbin name=webrtc_receive bundle-policy=max-bundle stun-server=stun://stun.l.google.com:19302")
@@ -258,13 +360,22 @@ class Receiver:
 
 
         
-
-        self.pipeline.set_state(Gst.State.PLAYING)
         
         bus = self.pipeline.get_bus()
-        bus.set_sync_handler(self.bus_msg_handler)
+
+        if self.benchmark_mode:
+            bus.set_sync_handler(self.bus_msg_handler)
+
+        if config["protocol"].startswith("HLS") or config["protocol"].startswith("DASH") or config["protocol"].startswith("RTMP"):
+            x = threading.Thread(target=self.start_pipeline_with_delay)
+            x.daemon = True
+            x.start()
+        else:
+            self.pipeline.set_state(Gst.State.PLAYING)
+
+
         
-        
+        #self.pipeline.set_state(Gst.State.PLAYING)
 
         #bus.add_signal_watch()
 
@@ -293,6 +404,10 @@ class Receiver:
         # free resources
         #pipeline.set_state(Gst.State.NULL)
 
+    def start_pipeline_with_delay(self):
+        time.sleep(10)
+        self.pipeline.set_state(Gst.State.PLAYING)
+    
     def send_sdp_answer(self, answer):
         text = answer.sdp.as_text()
         sdp = {'type': 'answer', 'sdp': text}

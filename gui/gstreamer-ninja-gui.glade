@@ -106,6 +106,8 @@
                           <item translatable="yes">UDP</item>
                           <item translatable="yes">TCP</item>
                           <item translatable="yes">RIST</item>
+                          <item translatable="yes">HLS FFMPEG</item>
+                          <item translatable="yes">DASH FFMPEG</item>
                         </items>
                       </object>
                       <packing>

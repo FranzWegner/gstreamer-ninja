@@ -4,6 +4,8 @@ import event_emitter as events
 import sys
 import logging
 import asyncio
+import pydivert
+import random
 #logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 import gi
@@ -23,6 +25,7 @@ from receiver import Receiver
 
 em = events.EventEmitter()
 
+chance = 0.05
 
 
 class WindowMain:
@@ -34,6 +37,7 @@ class WindowMain:
         self.em.on("change_label", self.change_label)
         self.em.on("start_sender_preview", self.start_sender_preview)
         self.em.on("start_receiver_preview", self.start_receiver_preview)
+        
 
         self.builder = Gtk.Builder()
         self.builder.add_from_file("gui/gstreamer-ninja-gui.glade")
@@ -142,23 +146,37 @@ def start_gui():
     app = WindowMain(em)
     app.main()
 
+def start_network_capture():
+    with pydivert.WinDivert("outbound") as w:
+        for packet in w:
+            #print(packet)
+            try:
+                w.send(packet)
+            except Exception:
+                pass
+        
+
 
 if __name__ == "__main__":
     
     gui_thread = threading.Thread(target=start_gui)
     sender_thread = threading.Thread(target=start_sender)
     receiver_thread = threading.Thread(target=start_receiver)
+    network_thread = threading.Thread(target=start_network_capture)
 
     gui_thread.daemon = True
     sender_thread.daemon = True
     receiver_thread.daemon = True
+    network_thread.daemon = True
 
     try:
         gui_thread.start()
         sender_thread.start()
         receiver_thread.start()
+        #network_thread.start()
         #while True: time.sleep(100)
         loop = asyncio.get_event_loop()
+        
         loop.run_forever()
     except (KeyboardInterrupt, SystemExit):
         pass
