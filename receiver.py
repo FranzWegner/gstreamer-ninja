@@ -30,11 +30,11 @@ Gst.init_check(None)
 
 #loop = GObject.MainLoop()
 
-ROOM_ID = "123"
+#ROOM_ID = "123"
 
 class Receiver:
 
-    def __init__(self, e_emitter):
+    def __init__(self, e_emitter, room_id):
         
         self.em = e_emitter
         self.em.on("update_sender_config", self.update_sender_config)
@@ -51,12 +51,13 @@ class Receiver:
         self.chance_of_dropping_packets = 0.00
         self.network_throttle_thread = threading.Thread(target=self.start_traffic_control)
         self.network_throttle_thread.daemon = True
+        self.room_id = room_id
 
         Gst.debug_add_log_function(self.handle_gst_log_message)
 
 
         print("Creating Receiver")
-        self.connection = SignallingServerConnection("receiver", "sender", "wss://localhost:8443", ROOM_ID, self.msg_handler)
+        self.connection = SignallingServerConnection("receiver", "sender", "wss://localhost:8443", self.room_id, self.msg_handler)
         
 
         # needed because run in extra thread
@@ -98,6 +99,7 @@ class Receiver:
 
     def update_sender_config(self, config):
         self.connection.send_msg({"update_sender_config": config})
+
     
     def bus_msg_handler(self, bus, message, *user_data):
 
@@ -258,6 +260,7 @@ class Receiver:
             #print(self.benchmark)
 
     def update_receiver_config(self, config):
+        self.em.emit("change_label", label_id="receiver_configuration_label", new_text=json.dumps(config))
         Gst.init(sys.argv[1:])
 
         self.config = config
@@ -433,7 +436,8 @@ class Receiver:
         #print("receiver", msg)
 
         if msg.startswith("ROOM_OK"):
-            self.em.emit("change_label", label_id="receiver_room_id_label", new_text=ROOM_ID)
+            self.em.emit("change_label", label_id="receiver_room_id_label", new_text=self.room_id)
+            self.em.emit("remove_container", container_id="receiver_connect_container", window="receiver")
         elif msg.startswith('ROOM_PEER_MSG'):
             data = json.loads(msg.split(maxsplit=2)[2])
             if "sdp" in data:

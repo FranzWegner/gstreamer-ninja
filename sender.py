@@ -25,14 +25,12 @@ Gst.debug_set_default_threshold(3)
 Gst.init(None)
 Gst.init_check(None)
 
-ROOM_ID = "123"
+#ROOM_ID = "123"
 
-test_config = {'receiver_source_list': 'videotestsrc', 'receiver_protocol_list': 'SRT', 'receiver_encoder_list': 
-'H264'}
 
 class Sender:
 
-    def __init__(self, e_emitter):
+    def __init__(self, e_emitter, room_id):
 
         self.em = e_emitter
 
@@ -42,6 +40,7 @@ class Sender:
         self.webrtcbin = None
         self.benchmark_started = False
         self.benchmark_mode = False
+        self.room_id = room_id
 
         #self.create_pipeline_from_config(test_config)
         
@@ -49,7 +48,7 @@ class Sender:
         #self.gui_handler = gui_handler
 
         print("Creating Sender")
-        self.connection = SignallingServerConnection("sender", "receiver", "wss://localhost:8443", ROOM_ID, self.msg_handler)
+        self.connection = SignallingServerConnection("sender", "receiver", "wss://localhost:8443", self.room_id, self.msg_handler)
         
         # helpful: https://gist.github.com/lars-tiede/01e5f5a551f29a5f300e
 
@@ -64,11 +63,13 @@ class Sender:
         #print("sender", msg)
         
         if msg.startswith("ROOM_OK"):
-            self.em.emit("change_label", label_id="sender_room_id_label", new_text=ROOM_ID)
+            self.em.emit("change_label", label_id="sender_room_id_label", new_text=self.room_id)
+            self.em.emit("remove_container", container_id="sender_connect_container", window="sender")
         elif msg.startswith('ROOM_PEER_MSG'):
             data = json.loads(msg.split(maxsplit=2)[2])
             if "update_sender_config" in data:
                 self.create_pipeline_from_config(data["update_sender_config"])
+                self.em.emit("change_label", label_id="sender_configuration_label", new_text=json.dumps(data["update_sender_config"]))
                 #pass
             elif "sdp" in data:
                 sdp = data["sdp"]
